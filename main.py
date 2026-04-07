@@ -6,6 +6,16 @@ import shap
 import numpy as np
 import joblib
 import pandas as pd
+import __main__
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import (
+    accuracy_score,
+    precision_score,
+    recall_score,
+    f1_score,
+    roc_auc_score,
+    confusion_matrix,
+)
 
 app = FastAPI()
 
@@ -21,7 +31,10 @@ class ThresholdModel:
     def predict_proba(self, X):
         return self.model.predict_proba(X)
 
-sys.modules['__main__'].ThresholdModel = ThresholdModel
+# Some serialized models reference `__main__.ThresholdModel` (from the training script).
+# When running under Uvicorn, `__main__` is not this file, so we must register it explicitly.
+setattr(__main__, "ThresholdModel", ThresholdModel)
+sys.modules["__main__"].ThresholdModel = ThresholdModel
 
 # ==============================
 # LOAD ALL MODELS (REGISTRY)
@@ -30,6 +43,9 @@ MODEL_REGISTRY = {}
 
 def load_model(path):
     try:
+        # Ensure custom wrapper is available during unpickling
+        setattr(__main__, "ThresholdModel", ThresholdModel)
+        sys.modules["__main__"].ThresholdModel = ThresholdModel
         m = joblib.load(path)
         if hasattr(m, "model"):
             m = m.model
@@ -63,6 +79,7 @@ model = MODEL_REGISTRY.get("tuned_ensemble2.pkl") or next(
 # SHAP EXPLAINERS
 # ==============================
 EXPLAINER_REGISTRY = {}
+_BACKGROUND_REGISTRY: dict[str, pd.DataFrame] = {}
 
 def _sigmoid(x: float) -> float:
     return float(1.0 / (1.0 + np.exp(-x)))
@@ -135,7 +152,21 @@ def _compute_shap_values_and_base(model_key: str, selected_model, input_df: pd.D
 
     # 2) Fallback: model-agnostic explainer on a tiny background (1 row)
     # NOTE: This avoids "no SHAP" for ensembles/wrappers, but can be slower.
-    masker = shap.maskers.Independent(input_df)
+    # IMPORTANT: background must not be identical to the input row, otherwise permutation SHAP can collapse to all zeros.
+    background = _BACKGROUND_REGISTRY.get(model_key)
+    if background is None:
+        try:
+            # Build a small background set from the training dataset, aligned to the model's features.
+            df_bg_raw = pd.read_csv("CVD_Dataset.csv").sample(n=200, random_state=42)
+            if "CVD_Risk" in df_bg_raw.columns:
+                df_bg_raw = df_bg_raw.drop(columns=["CVD_Risk"])
+            background = _preprocess_dataset_frame(df_bg_raw, selected_model=selected_model)
+        except Exception:
+            # Last-resort: use the input row duplicated (may yield weak explanations).
+            background = input_df.copy()
+        _BACKGROUND_REGISTRY[model_key] = background
+
+    masker = shap.maskers.Independent(background)
 
     def _predict_proba(X):
         X_df = pd.DataFrame(X, columns=input_df.columns)
@@ -181,40 +212,34 @@ def _shap_probability_breakdown(
     This keeps the core SHAP semantics: baseline + per-feature signed effects -> final prediction,
     but renders it in % points for non-technical users.
     """
-    p_base = _sigmoid(base_value)
-    items = []
-    for feature, sv in shap_values.items():
-        if not np.isfinite(sv):
-            continue
-        delta = _sigmoid(base_value + float(sv)) - p_base
-        items.append((feature, float(delta)))
+    p_base = _sigmoid(float(base_value))
+    target_delta = float(predicted_proba) - float(p_base)  # probability units (0..1)
 
+    # Use raw SHAP values (typically log-odds) for stable attribution.
+    # SHAP guarantees: base_value + sum(shap_values) ~= model_output (in the same space).
+    items = [(f, float(sv)) for f, sv in shap_values.items() if np.isfinite(sv)]
     if not items:
         return []
 
-    target_delta = float(predicted_proba) - float(p_base)
-
-    # Show the biggest drivers (up or down) for readability.
     items.sort(key=lambda x: abs(x[1]), reverse=True)
     use = items[: max(1, int(top_k))]
 
-    denom = sum(d for _, d in use)
-    # If denom is ~0, scaling would explode; just return the raw deltas in % points.
+    denom = float(sum(v for _, v in items))  # use ALL features to avoid near-zero denom from top-k cancellation
     if abs(denom) < 1e-12:
-        return [{"feature": f, "pct_points": round(d * 100, 2)} for f, d in use if round(d * 100, 2) != 0]
+        # If prediction ~= baseline, deltas are inherently tiny; still return top-k with proportional zeros.
+        return [{"feature": f, "pct_points": 0.0} for f, _ in use]
 
-    # Scale so selected items sum to the model delta (final - baseline).
-    scale = target_delta / denom
-    contribs = [(f, d * scale) for f, d in use]
+    scale = float((target_delta * 100.0) / denom)  # convert to percentage points per SHAP unit
+    breakdown = [{"feature": f, "pct_points": float(v * scale)} for f, v in use]
 
-    pct_points = [round(c * 100, 2) for _, c in contribs]
-    target_pp = round(target_delta * 100, 2)
-    diff = round(target_pp - sum(pct_points), 2)
-    pct_points[-1] = round(pct_points[-1] + diff, 2)
+    # Add an "Other" bucket so the displayed breakdown sums exactly to (pred - base)
+    shown_sum = float(sum(b["pct_points"] for b in breakdown))
+    target_pp = float(target_delta * 100.0)
+    other_pp = float(target_pp - shown_sum)
+    if abs(other_pp) > 1e-10:
+        breakdown.append({"feature": "Other", "pct_points": other_pp})
 
-    breakdown = [{"feature": f, "pct_points": pp} for (f, _), pp in zip(contribs, pct_points)]
-    # Remove exact zeros after rounding
-    return [b for b in breakdown if b["pct_points"] != 0]
+    return breakdown
 
 
 # encoding dictionaries
@@ -229,6 +254,164 @@ SMOKING_ENCODING = {'Never': 0, 'Occasional': 1, 'Regular': 2}
 ALCOHOL_ENCODING = {'Low': 0, 'Moderate': 1, 'High': 2}
 POLLUTION_ENCODING = {'Low': 0, 'Moderate': 1, 'High': 2}
 WORK_STRESS_ENCODING = {'Sedentary': 0, 'Physical': 1, 'Shift-based': 2}
+
+# ==============================
+# DATASET / METRICS (for model comparison)
+# ==============================
+_MODEL_COMPARISON_CACHE: dict | None = None
+
+def _preprocess_dataset_frame(df_raw: pd.DataFrame, selected_model=None) -> pd.DataFrame:
+    """
+    Vectorized preprocessing for evaluation using the same feature engineering as `preprocess_input`.
+    Expects raw columns as in CVD_Dataset.csv (including CVD_Risk).
+    """
+    df = df_raw.copy()
+
+    # Ensure required computed features exist (recompute to stay consistent with API)
+    if "Pulse_Pressure" not in df.columns:
+        df["Pulse_Pressure"] = df["Blood_Pressure_Systolic"] - df["Blood_Pressure_Diastolic"]
+    if "Sleep_Risk" not in df.columns:
+        df["Sleep_Risk"] = ((df["Sleep_Hours"] < 6) | (df["Sleep_Hours"] > 9)).astype(int)
+    if "High_Screen_Time" not in df.columns:
+        df["High_Screen_Time"] = (df["Screen_Time_Hours"] > 8).astype(int)
+    if "Cardio_Risk_Score" not in df.columns:
+        df["Cardio_Risk_Score"] = (
+            (df["Total_Cholesterol"] > 200).astype(int)
+            + (df["Triglycerides"] > 150).astype(int)
+            + (df["Blood_Pressure_Systolic"] > 130).astype(int)
+            + (df["BMI"] > 25).astype(int)
+            + (df["Diabetes"] == 1).astype(int)
+            + (df["Hypertension"] == 1).astype(int)
+            + (df["Smoking_Status"].isin(["Occasional", "Regular"])).astype(int)
+            + (df["Family_History_CVD"] == 1).astype(int)
+        )
+    # Column in CSV is "Metabolic Syndrome" (with space)
+    if "Metabolic Syndrome" not in df.columns:
+        metabolic_score = (
+            (df["BMI"] >= 25).astype(int)
+            + (df["Diabetes"] == 1).astype(int)
+            + (df["Triglycerides"] >= 150).astype(int)
+            + ((df["Blood_Pressure_Systolic"] >= 130) | (df["Blood_Pressure_Diastolic"] >= 85)).astype(int)
+        )
+        df["Metabolic Syndrome"] = (metabolic_score >= 3).astype(int)
+
+    # Label encodings (match API)
+    df["Air_Pollution_Exposure"] = df["Air_Pollution_Exposure"].map(POLLUTION_ENCODING).astype(int)
+    df["Urban_Rural"] = df["Urban_Rural"].map(URBAN_RURAL_ENCODING).astype(int)
+    df["Socioeconomic_Status"] = df["Socioeconomic_Status"].map(SOCIOECONOMIC_ENCODING).astype(int)
+    df["Physical_Activity_Level"] = df["Physical_Activity_Level"].map(ACTIVITY_ENCODING).astype(int)
+    df["Smoking_Status"] = df["Smoking_Status"].map(SMOKING_ENCODING).astype(int)
+    df["Alcohol_Consumption"] = df["Alcohol_Consumption"].map(ALCOHOL_ENCODING).astype(int)
+
+    # One-hot encodings (match API)
+    df["Gender_Male"] = (df["Gender"] == "Male").astype(int)
+    df["Gender_Other"] = (df["Gender"] == "Other").astype(int)
+
+    for region in ["East", "North", "South", "West"]:
+        df[f"Region_{region}"] = (df["Region"] == region).astype(int)
+
+    diet = df["Diet_Type"].replace({"Eggetarian": "Vegetarian"})
+    df["Diet_Type_Non-Vegetarian"] = (diet == "Non-Vegetarian").astype(int)
+    df["Diet_Type_Vegetarian"] = (diet == "Vegetarian").astype(int)
+
+    for w in ["Sedentary", "Shift-based"]:
+        df[f"Work_Stress_Type_{w}"] = (df["Work_Stress_Type"] == w).astype(int)
+
+    for occ in ["Labor_Worker", "Small_Business", "Students", "Unemployed"]:
+        df[f"Occupation_{occ}"] = (df["Occupation"] == occ).astype(int)
+
+    # Drop raw categoricals that models typically don't use directly
+    for col in ["Gender", "Region", "Diet_Type", "Work_Stress_Type", "Occupation"]:
+        if col in df.columns:
+            df = df.drop(columns=[col])
+
+    # Align with model features
+    if selected_model is not None and hasattr(selected_model, "feature_names_in_"):
+        for col in selected_model.feature_names_in_:
+            if col not in df.columns:
+                df[col] = 0
+        df = df[selected_model.feature_names_in_]
+
+    return df
+
+
+def _evaluate_model_on_dataset(model_key: str, selected_model, df_raw: pd.DataFrame) -> dict:
+    y = df_raw["CVD_Risk"].astype(int).to_numpy()
+    X = _preprocess_dataset_frame(df_raw.drop(columns=["CVD_Risk"]), selected_model=selected_model)
+
+    X_train, X_test, y_train, y_test = train_test_split(
+        X,
+        y,
+        test_size=0.2,
+        random_state=42,
+        stratify=y,
+    )
+
+    # Models are already trained; we only evaluate on the held-out split
+    y_pred = selected_model.predict(X_test)
+
+    try:
+        y_proba = selected_model.predict_proba(X_test)[:, 1]
+    except Exception:
+        # Fallback if model doesn't support predict_proba
+        y_proba = y_pred.astype(float)
+
+    cm = confusion_matrix(y_test, y_pred, labels=[0, 1])
+    tn, fp, fn, tp = (int(cm[0, 0]), int(cm[0, 1]), int(cm[1, 0]), int(cm[1, 1]))
+
+    # roc_auc requires both classes present; stratify should ensure this
+    try:
+        auc = float(roc_auc_score(y_test, y_proba))
+    except Exception:
+        auc = None
+
+    return {
+        "model_key": model_key,
+        "n_rows": int(len(df_raw)),
+        "test_size": 0.2,
+        "random_state": 42,
+        "accuracy": float(accuracy_score(y_test, y_pred)),
+        "precision": float(precision_score(y_test, y_pred, zero_division=0)),
+        "recall": float(recall_score(y_test, y_pred, zero_division=0)),
+        "f1": float(f1_score(y_test, y_pred, zero_division=0)),
+        "roc_auc": auc,
+        "confusion_matrix": {"tn": tn, "fp": fp, "fn": fn, "tp": tp},
+    }
+
+
+def _compute_model_comparison(force: bool = False) -> dict:
+    global _MODEL_COMPARISON_CACHE
+    if _MODEL_COMPARISON_CACHE is not None and not force:
+        return _MODEL_COMPARISON_CACHE
+
+    dataset_path = "CVD_Dataset.csv"
+    try:
+        df = pd.read_csv(dataset_path)
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"Could not read dataset '{dataset_path}': {e}")
+
+    if "CVD_Risk" not in df.columns:
+        raise HTTPException(status_code=503, detail="Dataset missing required target column 'CVD_Risk'")
+
+    results = []
+    for model_key, m in MODEL_REGISTRY.items():
+        if m is None:
+            results.append({"model_key": model_key, "available": False, "error": "Model unavailable (missing dependency or failed to load)."})
+            continue
+        try:
+            metrics = _evaluate_model_on_dataset(model_key, m, df)
+            metrics["available"] = True
+            results.append(metrics)
+        except Exception as e:
+            results.append({"model_key": model_key, "available": False, "error": str(e)})
+
+    payload = {
+        "dataset": dataset_path,
+        "target": "CVD_Risk",
+        "models": results,
+    }
+    _MODEL_COMPARISON_CACHE = payload
+    return payload
 
 # Pydantic model for user input - aligned with CVD_Dataset.csv features
 class UserInput(BaseModel):
@@ -448,3 +631,11 @@ async def predict_cvd_risk(user_input: UserInput):
         "shap_base_probability": None if shap_base_proba is None else round(float(shap_base_proba) * 100, 2),
         "shap_breakdown": shap_breakdown,
     }
+
+
+@app.get("/model-comparison")
+async def model_comparison(force: bool = False):
+    """
+    Returns validation metrics for all registered models on CVD_Dataset.csv.
+    """
+    return _compute_model_comparison(force=force)

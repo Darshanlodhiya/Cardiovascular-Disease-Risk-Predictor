@@ -40,6 +40,9 @@ selected_model_file = MODEL_OPTIONS[selected_model_name]
 
 st.sidebar.info(f"Using: {selected_model_name}")
 
+st.sidebar.divider()
+show_model_comparison = st.sidebar.checkbox("📊 Compare all models (validation)", value=False)
+
 # ==============================
 # INPUT FORM
 # ==============================
@@ -165,23 +168,29 @@ if st.button("🚀 Predict Risk"):
 
                 df_breakdown = pd.DataFrame(breakdown)
                 df_breakdown["pct_points"] = pd.to_numeric(df_breakdown["pct_points"], errors="coerce").fillna(0.0)
-                df_breakdown = df_breakdown[df_breakdown["pct_points"] != 0]
+                # Keep very small effects; we'll render with higher precision if needed.
+                df_breakdown = df_breakdown[df_breakdown["pct_points"].abs() > 1e-10]
 
                 df_up = df_breakdown[df_breakdown["pct_points"] > 0].sort_values("pct_points", ascending=False)
                 df_down = df_breakdown[df_breakdown["pct_points"] < 0].assign(pct_points=lambda d: d["pct_points"].abs()).sort_values("pct_points", ascending=False)
+
+                def _fmt_pp(x: float) -> str:
+                    ax = abs(float(x))
+                    # For tiny contributions, show more decimals so it doesn't look like "0.00"
+                    return f"{ax:.4f}%" if ax < 0.05 else f"{ax:.2f}%"
 
                 if not df_up.empty:
                     st.markdown("**What increased your risk**")
                     lines = []
                     for i, row in enumerate(df_up.itertuples(index=False), start=1):
-                        lines.append(f"{i}. **+{row.pct_points:.2f}%** because of **{row.feature}**")
+                        lines.append(f"{i}. **+{_fmt_pp(row.pct_points)}** because of **{row.feature}**")
                     st.markdown("\n".join(lines))
 
                 if not df_down.empty:
                     st.markdown("**What decreased your risk**")
                     lines = []
                     for i, row in enumerate(df_down.itertuples(index=False), start=1):
-                        lines.append(f"{i}. **-{row.pct_points:.2f}%** because of **{row.feature}**")
+                        lines.append(f"{i}. **-{_fmt_pp(row.pct_points)}** because of **{row.feature}**")
                     st.markdown("\n".join(lines))
 
                 # Simple chart: show absolute magnitude, with direction in a separate column.
@@ -195,17 +204,58 @@ if st.button("🚀 Predict Risk"):
                     st.dataframe(
                         df_breakdown.rename(columns={"feature": "Feature", "pct_points": "Δ Risk (pp)"})
                         .sort_values("Δ Risk (pp)", ascending=False)
-                        .style.format({"Δ Risk (pp)": "{:+.2f}"})
+                        .style.format({"Δ Risk (pp)": "{:+.6f}"})
                     )
             else:
                 # If backend sends an explanation error, show a friendly message.
                 if isinstance(shap_data, dict) and "error" in shap_data:
                     st.warning(f"Explanation not available: {shap_data['error']}")
                 else:
-                    st.warning("Explanation not available for this prediction.")
+                    st.info("Explanation is unavailable (effects may be extremely small for this input). Try changing a few inputs and predict again.")
 
         else:
             st.error(f"API Error: {response.text}")
 
     except Exception as e:
         st.error(f"Connection Error: {e}")
+
+# ==============================
+# MODEL COMPARISON (VALIDATION)
+# ==============================
+if show_model_comparison:
+    st.header("📊 Model comparison (validation on dataset)")
+    st.caption("Compares all 6 models using validation metrics from `CVD_Dataset.csv` via the backend.")
+
+    if st.button("Run / Refresh comparison"):
+        try:
+            r = requests.get("http://127.0.0.1:8002/model-comparison", params={"force": "true"}, timeout=120)
+            if r.status_code != 200:
+                st.error(f"Backend error: {r.text}")
+            else:
+                st.session_state["model_comparison"] = r.json()
+        except Exception as e:
+            st.error(f"Connection Error: {e}")
+
+    data = st.session_state.get("model_comparison")
+    if data and "models" in data:
+        df_models = pd.DataFrame(data["models"])
+        df_ok = df_models[df_models.get("available", False) == True].copy()
+        df_bad = df_models[df_models.get("available", False) != True].copy()
+
+        if not df_ok.empty:
+            cols = ["model_key", "roc_auc", "accuracy", "f1", "precision", "recall"]
+            for c in cols:
+                if c not in df_ok.columns:
+                    df_ok[c] = None
+            df_ok = df_ok[cols].sort_values(["roc_auc", "accuracy"], ascending=False)
+
+            st.subheader("Results (higher is better)")
+            st.dataframe(df_ok.style.format({"roc_auc": "{:.4f}", "accuracy": "{:.4f}", "f1": "{:.4f}", "precision": "{:.4f}", "recall": "{:.4f}"}))
+
+        if not df_bad.empty:
+            st.subheader("Unavailable / failed models")
+            cols = ["model_key", "error"]
+            for c in cols:
+                if c not in df_bad.columns:
+                    df_bad[c] = ""
+            st.dataframe(df_bad[cols])
