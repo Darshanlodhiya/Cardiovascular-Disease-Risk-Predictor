@@ -1,0 +1,26 @@
+__pycache__/
+*.py[cod]
+*.pyo
+.Python
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+*.log
+
+# Streamlit/IDE
+.streamlit/
+.vscode/
+.idea/
+.cursor/
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Local artifacts
+*.sqlite3
+
+# Model binaries (too large for normal git; use Git LFS or Releases)
+*.pkl
