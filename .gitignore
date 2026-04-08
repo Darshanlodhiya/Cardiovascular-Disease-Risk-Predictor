@@ -30,3 +30,6 @@ Models_Performance/
 
 # dataset
 CVD_Dataset.csv
+
+# .ipynb file
+Model_From_New_Dataset.ipynb

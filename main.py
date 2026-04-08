@@ -242,6 +242,204 @@ def _shap_probability_breakdown(
     return breakdown
 
 
+def _priority_from_impact(impact_pp: float) -> str:
+    if impact_pp >= 8:
+        return "High"
+    if impact_pp >= 3:
+        return "Medium"
+    return "Low"
+
+
+def _safety_flags(user_input: "UserInput") -> list[str]:
+    flags: list[str] = []
+    if user_input.Blood_Pressure_Systolic >= 180 or user_input.Blood_Pressure_Diastolic >= 120:
+        flags.append("Very high blood pressure range. Seek urgent medical assessment.")
+    if user_input.Fasting_Blood_Sugar >= 200:
+        flags.append("Very high fasting glucose. Prompt clinician review is advised.")
+    if user_input.HbA1c >= 9.0:
+        flags.append("Very high HbA1c. Diabetes treatment review is recommended soon.")
+    if user_input.LDL >= 190:
+        flags.append("LDL is very high (>=190 mg/dL). Medical lipid management should be discussed.")
+    return flags
+
+
+def _build_recommendation_for_feature(feature: str, user_input: "UserInput", impact_pp: float) -> dict | None:
+    # Build one recommendation per modifiable SHAP feature to keep order aligned.
+    rec: dict | None = None
+    safety_flag: str | None = None
+
+    if feature in {"Blood_Pressure_Systolic", "Blood_Pressure_Diastolic"}:
+        rec = {
+            "feature": feature,
+            "current_value": f"{user_input.Blood_Pressure_Systolic}/{user_input.Blood_Pressure_Diastolic} mmHg",
+            "target": "Home BP consistently <130/80 mmHg",
+            "action": "Measure BP at home for 7 days, reduce salt to <5 g/day, and do brisk walking 30 minutes on most days.",
+        }
+        if user_input.Blood_Pressure_Systolic >= 180 or user_input.Blood_Pressure_Diastolic >= 120:
+            safety_flag = "Urgent medical assessment advised for very high blood pressure."
+    elif feature == "Pulse_Pressure":
+        rec = {
+            "feature": feature,
+            "current_value": f"{user_input.Blood_Pressure_Systolic - user_input.Blood_Pressure_Diastolic} mmHg",
+            "target": "Narrow pulse pressure trend via BP control",
+            "action": "Control systolic BP with daily activity, low-salt meals, and medication review if readings stay high.",
+        }
+    elif feature == "Hypertension":
+        rec = {
+            "feature": feature,
+            "current_value": "Yes" if user_input.Hypertension == 1 else "No",
+            "target": "Sustained BP control and adherence",
+            "action": "Do not miss BP medicines, track BP weekly, and review treatment if average home BP remains above target.",
+        }
+    elif feature in {"LDL", "Total_Cholesterol", "Triglycerides", "HDL"}:
+        rec = {
+            "feature": feature,
+            "current_value": (
+                f"LDL {user_input.LDL}, Total {user_input.Total_Cholesterol}, "
+                f"TG {user_input.Triglycerides}, HDL {user_input.HDL} mg/dL"
+            ),
+            "target": "LDL <100 mg/dL, TG <150 mg/dL, HDL at least 40-50 mg/dL",
+            "action": "Replace fried/processed foods with fiber-rich meals, add weekly exercise, and repeat lipid tests in 8-12 weeks.",
+        }
+        if user_input.LDL >= 190:
+            safety_flag = "LDL is very high; discuss early lipid-lowering treatment with your clinician."
+    elif feature in {"Fasting_Blood_Sugar", "HbA1c"}:
+        rec = {
+            "feature": feature,
+            "current_value": f"FBS {user_input.Fasting_Blood_Sugar} mg/dL, HbA1c {user_input.HbA1c}%",
+            "target": "Fasting sugar 80-130 mg/dL and HbA1c <7% (individualized)",
+            "action": "Cut refined carbs/sugary drinks, walk 10-15 minutes after meals, and monitor sugars as advised.",
+        }
+        if user_input.Fasting_Blood_Sugar >= 200:
+            safety_flag = "Very high fasting glucose needs prompt medical review."
+        if user_input.HbA1c >= 9.0:
+            safety_flag = "Very high HbA1c needs treatment review soon."
+    elif feature == "Diabetes":
+        rec = {
+            "feature": feature,
+            "current_value": "Yes" if user_input.Diabetes == 1 else "No",
+            "target": "Consistent glucose control and routine follow-up",
+            "action": "Follow medication and meal timing regularly, and schedule periodic HbA1c and kidney/eye screening.",
+        }
+    elif feature in {"BMI", "Metabolic Syndrome", "Cardio_Risk_Score"}:
+        rec = {
+            "feature": feature,
+            "current_value": f"BMI {user_input.BMI}",
+            "target": "Reduce body weight by 5-10% over 6 months if overweight",
+            "action": "Use plate-based portion control, keep a daily step goal, and include strength training 2-3 times/week.",
+        }
+    elif feature in {"Smoking_Status"}:
+        rec = {
+            "feature": feature,
+            "current_value": user_input.Smoking_Status,
+            "target": "Complete tobacco cessation",
+            "action": "Set a quit date, avoid trigger situations, and use cessation counseling/therapy support.",
+        }
+    elif feature in {"Alcohol_Consumption"}:
+        rec = {
+            "feature": feature,
+            "current_value": user_input.Alcohol_Consumption,
+            "target": "Avoid alcohol or keep to minimal intake",
+            "action": "Plan alcohol-free days each week and avoid binge drinking.",
+        }
+    elif feature in {"Daily_Steps"}:
+        rec = {
+            "feature": feature,
+            "current_value": f"{user_input.Daily_Steps} steps/day",
+            "target": "Increase by 1000-2000 steps/day in the next 2-4 weeks",
+            "action": "Add two 10-15 minute brisk walks (after meals works well).",
+        }
+    elif feature in {"Physical_Activity_Level"}:
+        rec = {
+            "feature": feature,
+            "current_value": user_input.Physical_Activity_Level,
+            "target": "At least 150-300 min/week moderate activity",
+            "action": "Schedule 30 minutes of moderate activity on 5 days/week plus 2 days of strength work.",
+        }
+    elif feature in {"Sleep_Hours", "Sleep_Risk"}:
+        rec = {
+            "feature": feature,
+            "current_value": f"{user_input.Sleep_Hours} hours/night",
+            "target": "7-9 hours sleep with a regular schedule",
+            "action": "Fix bedtime/wake time daily and avoid caffeine/screens in the late evening.",
+        }
+    elif feature in {"Screen_Time_Hours", "High_Screen_Time"}:
+        rec = {
+            "feature": feature,
+            "current_value": f"{user_input.Screen_Time_Hours} hours/day",
+            "target": "Reduce recreational screen exposure, especially before sleep",
+            "action": "Set app timers and keep the last 60 minutes before bed screen-free.",
+        }
+    elif feature in {"Stress_Level", "Work_Stress_Type_Shift-based", "Work_Stress_Type_Sedentary"}:
+        rec = {
+            "feature": feature,
+            "current_value": f"Stress {user_input.Stress_Level}/10, work pattern {user_input.Work_Stress_Type}",
+            "target": "Lower day-to-day stress burden",
+            "action": "Practice 10 minutes daily breathing/mindfulness and add short movement breaks every 60 minutes at work.",
+        }
+    elif feature in {"Junk_Food_Frequency"}:
+        rec = {
+            "feature": feature,
+            "current_value": f"{user_input.Junk_Food_Frequency}/10",
+            "target": "Limit junk food to <=1-2 times/week",
+            "action": "Pre-plan healthy snacks and swap one processed meal each day with a home-cooked whole-food option.",
+        }
+    elif feature in {"Diet_Type_Non-Vegetarian"}:
+        rec = {
+            "feature": feature,
+            "current_value": user_input.Diet_Type,
+            "target": "Heart-healthy meal pattern (DASH-style)",
+            "action": "Prioritize vegetables, pulses, whole grains, and lean proteins while reducing red/processed meat portions.",
+        }
+    elif feature in {"Air_Pollution_Exposure"}:
+        rec = {
+            "feature": feature,
+            "current_value": user_input.Air_Pollution_Exposure,
+            "target": "Reduce peak pollution exposure where possible",
+            "action": "Avoid outdoor exercise during high AQI periods and use cleaner commuting/indoor air strategies.",
+        }
+
+    if rec is None:
+        return None
+
+    rec["priority"] = _priority_from_impact(impact_pp)
+    rec["impact"] = float(impact_pp)
+    rec["safety_flag"] = safety_flag
+    return rec
+
+
+def _generate_recommendations(user_input: "UserInput", shap_breakdown: list[dict]) -> list[dict]:
+    # Keep same order as "What increased your risk" list in SHAP breakdown.
+    positive_items = [
+        item for item in shap_breakdown
+        if item.get("feature") not in {None, "Other"} and float(item.get("pct_points", 0.0)) > 0
+    ]
+
+    recommendations: list[dict] = []
+    for item in positive_items:
+        feature = str(item.get("feature"))
+        impact_pp = float(item.get("pct_points", 0.0))
+        rec = _build_recommendation_for_feature(feature=feature, user_input=user_input, impact_pp=impact_pp)
+        if rec:
+            recommendations.append(rec)
+
+    # If no modifiable factor was captured, return empty list.
+    if not recommendations:
+        return []
+
+    # Attach global safety flags once, to the first recommendation, without changing order.
+    flags = _safety_flags(user_input)
+    if flags:
+        merged = " | ".join(flags)
+        recommendations[0]["safety_flag"] = (
+            f"{recommendations[0]['safety_flag']} | {merged}"
+            if recommendations[0].get("safety_flag")
+            else merged
+        )
+
+    return recommendations
+
+
 # encoding dictionaries
 GENDER_ENCODING = {'Male': 1, 'Female': 0, 'Other': 2}
 REGION_ENCODING = {'North': 0, 'South': 1, 'East': 2, 'West': 3, 'Central': 4}
@@ -621,6 +819,7 @@ async def predict_cvd_risk(user_input: UserInput):
         shap_values_dict = {"error": str(e)}
         shap_base_proba = None
         shap_breakdown = []
+    recommendations = _generate_recommendations(user_input=user_input, shap_breakdown=shap_breakdown)
 
     return {
         "CVD_Risk": int(prediction),
@@ -630,6 +829,7 @@ async def predict_cvd_risk(user_input: UserInput):
         "shap_values": shap_values_dict,
         "shap_base_probability": None if shap_base_proba is None else round(float(shap_base_proba) * 100, 2),
         "shap_breakdown": shap_breakdown,
+        "recommendations": recommendations,
     }
 
 

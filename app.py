@@ -7,7 +7,7 @@ import requests
 # ==============================
 st.set_page_config(page_title="CVD Risk Predictor", layout="wide")
 
-API_URL = "http://127.0.0.1:8002/predict"
+API_URL = "http://127.0.0.1:8003/predict"
 
 # Available models (you can expand later)
 MODEL_OPTIONS = {
@@ -22,9 +22,18 @@ MODEL_OPTIONS = {
 # ==============================
 # TITLE
 # ==============================
-st.title("💓 Cardiovascular Disease Risk Predictor")
-st.markdown("AI-powered early risk detection system")
-st.markdown("NOTE: Please enter all details in order to get best prediction.")
+st.markdown(
+    "<h1 style='text-align: center;'>💓 Cardiovascular Disease Risk Predictor</h1>",
+    unsafe_allow_html=True
+)
+st.markdown(
+    "<h4 style='text-align: center;'>AI-powered early risk detection system</h4>",
+    unsafe_allow_html=True
+)
+st.markdown(
+    "<h5 style='text-align: center;'>============================NOTE: Please enter all details in order to get best prediction.============================</h5>",
+    unsafe_allow_html=True
+)
 
 # ==============================
 # MODEL SELECTION
@@ -41,18 +50,18 @@ selected_model_file = MODEL_OPTIONS[selected_model_name]
 st.sidebar.info(f"Using: {selected_model_name}")
 
 st.sidebar.divider()
-show_model_comparison = st.sidebar.checkbox("📊 Compare all models (validation)", value=False)
+show_model_comparison = st.sidebar.checkbox("Compare all models (validation)", value=False)
 
 # ==============================
 # INPUT FORM
 # ==============================
 st.header("🧾 Enter Patient Details")
 
-col1, col2, col3 = st.columns(3)
+col1, col2 = st.columns(2)
 
 # -------- Column 1 --------
 with col1:
-    st.subheader("👤 Demographics")
+    st.subheader("Demographics")
     age = st.number_input("Age", 18, 100, 25)
     gender = st.selectbox("Gender", ["Male", "Female", "Other"])
     region = st.selectbox("Region", ["North", "South", "East", "West", "Central"])
@@ -62,45 +71,51 @@ with col1:
 
 # -------- Column 2 --------
 with col2:
-    st.subheader("🏃 Lifestyle")
+    st.subheader("Lifestyle")
     diet = st.selectbox("Diet Type", ["Vegetarian", "Non-Vegetarian", "Eggetarian"])
-    junk = st.slider("Junk Food Frequency", 0, 10, 5)
     activity = st.selectbox("Activity Level", ["Low", "Moderate", "High"])
     steps = st.number_input("Daily Steps", 0, 50000, 5000)
-    screen = st.slider("Screen Time (hrs)", 0.0, 24.0, 5.0)
+    life_row1_col1, life_row1_col2 = st.columns(2)
+    with life_row1_col1:
+        junk = st.slider("Junk Food Frequency", 0, 10, 5)
+    with life_row1_col2:
+        screen = st.slider("Screen Time (hrs)", 0.0, 24.0, 5.0)
     sleep = st.slider("Sleep Hours", 0.0, 24.0, 7.0)
     stress = st.slider("Stress Level", 1, 10, 5)
+    # Visual balance: align bottom edge with Demographics column.
+    st.markdown("<div style='height: 2.2rem;'></div>", unsafe_allow_html=True)
 
-# -------- Column 3 --------
-with col3:
-    st.subheader("🩺 Medical + Biomarkers")
+# -------- Full-width row below --------
+st.subheader("Medical + Biomarkers")
+med1, med2 = st.columns(2)
+
+with med1:
     smoking = st.selectbox("Smoking", ["Never", "Occasional", "Regular"])
     alcohol = st.selectbox("Alcohol", ["Low", "Moderate", "High"])
-
     family = st.selectbox("Family History CVD", [0, 1])
     diabetes = st.selectbox("Diabetes", [0, 1])
     hypertension = st.selectbox("Hypertension", [0, 1])
     pcos = st.selectbox("PCOS", [0, 1])
+    pollution = st.selectbox("Pollution Exposure", ["Low", "Moderate", "High"])
+    work = st.selectbox("Work Stress Type", ["Sedentary", "Physical", "Shift-based"])
+    trig = st.number_input("Triglycerides", 20.0, 500.0, 150.0)
 
+with med2:
     bmi = st.number_input("BMI", 10.0, 60.0, 24.5)
     sys_bp = st.number_input("Systolic BP", 80, 200, 120)
     dia_bp = st.number_input("Diastolic BP", 40, 130, 80)
     hr = st.number_input("Heart Rate", 40, 150, 70)
-
     sugar = st.number_input("Fasting Sugar", 50.0, 300.0, 100.0)
     hba1c = st.number_input("HbA1c", 3.0, 15.0, 5.5)
     chol = st.number_input("Total Cholesterol", 50.0, 400.0, 200.0)
     ldl = st.number_input("LDL", 20.0, 300.0, 130.0)
     hdl = st.number_input("HDL", 10.0, 150.0, 50.0)
-    trig = st.number_input("Triglycerides", 20.0, 500.0, 150.0)
-
-    pollution = st.selectbox("Pollution Exposure", ["Low", "Moderate", "High"])
-    work = st.selectbox("Work Stress Type", ["Sedentary", "Physical", "Shift-based"])
 
 # ==============================
 # PREDICT BUTTON
 # ==============================
-if st.button("🚀 Predict Risk"):
+st.markdown("<div style='height: 1.5rem;'></div>", unsafe_allow_html=True)
+if st.button("Predict Risk"):
 
     payload = {
         "Age": age,
@@ -171,8 +186,17 @@ if st.button("🚀 Predict Risk"):
                 # Keep very small effects; we'll render with higher precision if needed.
                 df_breakdown = df_breakdown[df_breakdown["pct_points"].abs() > 1e-10]
 
-                df_up = df_breakdown[df_breakdown["pct_points"] > 0].sort_values("pct_points", ascending=False)
-                df_down = df_breakdown[df_breakdown["pct_points"] < 0].assign(pct_points=lambda d: d["pct_points"].abs()).sort_values("pct_points", ascending=False)
+                df_up = (
+                    df_breakdown[df_breakdown["pct_points"] > 0]
+                    .sort_values("pct_points", ascending=False)
+                    .reset_index(drop=True)
+                )
+                df_down = (
+                    df_breakdown[df_breakdown["pct_points"] < 0]
+                    .assign(pct_points=lambda d: d["pct_points"].abs())
+                    .sort_values("pct_points", ascending=False)
+                    .reset_index(drop=True)
+                )
 
                 def _fmt_pp(x: float) -> str:
                     ax = abs(float(x))
@@ -201,11 +225,40 @@ if st.button("🚀 Predict Risk"):
                 st.bar_chart(df_chart.set_index("feature")[["magnitude"]])
 
                 with st.expander("See detailed breakdown (percentage points)"):
-                    st.dataframe(
+                    df_breakdown_view = (
                         df_breakdown.rename(columns={"feature": "Feature", "pct_points": "Δ Risk (pp)"})
                         .sort_values("Δ Risk (pp)", ascending=False)
-                        .style.format({"Δ Risk (pp)": "{:+.6f}"})
+                        .reset_index(drop=True)
                     )
+                    st.dataframe(
+                        df_breakdown_view.style.format({"Δ Risk (pp)": "{:+.6f}"})
+                    )
+
+                # ==============================
+                # PERSONALIZED RECOMMENDATIONS
+                # ==============================
+                recommendations = result.get("recommendations", [])
+                if recommendations:
+                    st.subheader("Personalized Recommendations (WHO Guidelines)")
+                    st.caption("Order matches the factors listed in 'What increased your risk'.")
+
+                    for i, rec in enumerate(recommendations, start=1):
+                        title = rec.get("feature", "Unknown")
+                        priority = rec.get("priority", "Medium")
+                        impact = float(rec.get("impact", 0.0) or 0.0)
+                        with st.expander(f"{i}. {title} ({priority} priority, +{impact:.2f} pp)"):
+                            col1, col2 = st.columns(2)
+                            with col1:
+                                st.markdown(f"**Current:** {rec.get('current_value', 'N/A')}")
+                                st.markdown(f"**Target:** {rec.get('target', 'N/A')}")
+                            with col2:
+                                st.markdown(f"**Action:** {rec.get('action', 'No action specified')}")
+                                safety = rec.get("safety_flag")
+                                if safety:
+                                    st.error(f"**Safety Alert:** {safety}")
+                else:
+                    st.info("No specific recommendations available for this profile. Your current values appear to be within healthy ranges.")
+
             else:
                 # If backend sends an explanation error, show a friendly message.
                 if isinstance(shap_data, dict) and "error" in shap_data:
@@ -223,12 +276,19 @@ if st.button("🚀 Predict Risk"):
 # MODEL COMPARISON (VALIDATION)
 # ==============================
 if show_model_comparison:
-    st.header("📊 Model comparison (validation on dataset)")
-    st.caption("Compares all 6 models using validation metrics from `CVD_Dataset.csv` via the backend.")
-
-    if st.button("Run / Refresh comparison"):
+    st.markdown(
+    "<h3 style='text-align: center;'>Model comparison (validation on dataset)</h3>",
+    unsafe_allow_html=True
+    )
+    st.markdown(
+    "<p style='text-align: center; font-size: 14px; color: gray;'>"
+    "Compares all 6 models using validation metrics from `CVD_Dataset.csv` via the backend."
+    "</p>",
+    unsafe_allow_html=True
+    )
+    if st.button("Run Comparison"):
         try:
-            r = requests.get("http://127.0.0.1:8002/model-comparison", params={"force": "true"}, timeout=120)
+            r = requests.get("http://127.0.0.1:8003/model-comparison", params={"force": "true"}, timeout=120)
             if r.status_code != 200:
                 st.error(f"Backend error: {r.text}")
             else:
@@ -247,9 +307,9 @@ if show_model_comparison:
             for c in cols:
                 if c not in df_ok.columns:
                     df_ok[c] = None
-            df_ok = df_ok[cols].sort_values(["roc_auc", "accuracy"], ascending=False)
+            df_ok = df_ok[cols].sort_values(["roc_auc", "accuracy"], ascending=False).reset_index(drop=True)
 
-            st.subheader("Results (higher is better)")
+            st.subheader("Results (models with higher ROC-AUC & Recall are better)")
             st.dataframe(df_ok.style.format({"roc_auc": "{:.4f}", "accuracy": "{:.4f}", "f1": "{:.4f}", "precision": "{:.4f}", "recall": "{:.4f}"}))
 
         if not df_bad.empty:
