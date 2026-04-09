@@ -195,6 +195,41 @@ Open: [http://localhost:8501](http://localhost:8501)
 
 ---
 
+## 8.5) Run With Docker (Containerized)
+
+This project provides a multi-service Docker setup:
+
+- `backend` (FastAPI) on port `8003`
+- `frontend` (Streamlit) on port `8501`
+
+### Build and start
+
+```bash
+docker compose up --build
+```
+
+### Run in detached mode
+
+```bash
+docker compose up --build -d
+```
+
+### Stop containers
+
+```bash
+docker compose down
+```
+
+### View container logs
+
+```bash
+docker compose logs -f
+```
+
+Open: [http://localhost:8501](http://localhost:8501)
+
+---
+
 ## 9) Model Files and Selection
 
 Available model artifacts registered in backend:

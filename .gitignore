@@ -22,14 +22,8 @@ env/
 # Local artifacts
 *.sqlite3
 
-# Model binaries (too large for normal git; use Git LFS or Releases)
-*.pkl
-
 # extra files
 Models_Performance/
-
-# dataset
-CVD_Dataset.csv
 
 # .ipynb file
 Model_From_New_Dataset.ipynb

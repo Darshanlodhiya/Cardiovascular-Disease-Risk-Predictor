@@ -1,13 +1,16 @@
 import streamlit as st
 import pandas as pd
 import requests
+import os
 
 # ==============================
 # CONFIG
 # ==============================
 st.set_page_config(page_title="CVD Risk Predictor", layout="wide")
 
-API_URL = "http://127.0.0.1:8003/predict"
+API_BASE_URL = os.getenv("API_BASE_URL", "http://127.0.0.1:8003")
+API_URL = f"{API_BASE_URL}/predict"
+MODEL_COMPARISON_URL = f"{API_BASE_URL}/model-comparison"
 
 # Available models (you can expand later)
 MODEL_OPTIONS = {
@@ -203,19 +206,25 @@ if st.button("Predict Risk"):
                     # For tiny contributions, show more decimals so it doesn't look like "0.00"
                     return f"{ax:.4f}%" if ax < 0.05 else f"{ax:.2f}%"
 
-                if not df_up.empty:
+                up_col, down_col = st.columns(2, gap="large")
+                with up_col:
                     st.markdown("**What increased your risk**")
-                    lines = []
-                    for i, row in enumerate(df_up.itertuples(index=False), start=1):
-                        lines.append(f"{i}. **+{_fmt_pp(row.pct_points)}** because of **{row.feature}**")
-                    st.markdown("\n".join(lines))
-
-                if not df_down.empty:
+                    if not df_up.empty:
+                        lines = []
+                        for i, row in enumerate(df_up.itertuples(index=False), start=1):
+                            lines.append(f"{i}. **+{_fmt_pp(row.pct_points)}** because of **{row.feature}**")
+                        st.markdown("\n".join(lines))
+                    else:
+                        st.caption("No factors increased your risk in this breakdown.")
+                with down_col:
                     st.markdown("**What decreased your risk**")
-                    lines = []
-                    for i, row in enumerate(df_down.itertuples(index=False), start=1):
-                        lines.append(f"{i}. **-{_fmt_pp(row.pct_points)}** because of **{row.feature}**")
-                    st.markdown("\n".join(lines))
+                    if not df_down.empty:
+                        lines = []
+                        for i, row in enumerate(df_down.itertuples(index=False), start=1):
+                            lines.append(f"{i}. **-{_fmt_pp(row.pct_points)}** because of **{row.feature}**")
+                        st.markdown("\n".join(lines))
+                    else:
+                        st.caption("No factors decreased your risk in this breakdown.")
 
                 # Simple chart: show absolute magnitude, with direction in a separate column.
                 df_chart = df_breakdown.copy()
@@ -288,7 +297,7 @@ if show_model_comparison:
     )
     if st.button("Run Comparison"):
         try:
-            r = requests.get("http://127.0.0.1:8003/model-comparison", params={"force": "true"}, timeout=120)
+            r = requests.get(MODEL_COMPARISON_URL, params={"force": "true"}, timeout=120)
             if r.status_code != 200:
                 st.error(f"Backend error: {r.text}")
             else:

@@ -839,3 +839,10 @@ async def model_comparison(force: bool = False):
     Returns validation metrics for all registered models on CVD_Dataset.csv.
     """
     return _compute_model_comparison(force=force)
+
+@app.get("/health")
+def health():
+    return{
+        'Status': 'OK',
+        'Version': '1.0.0'
+    }
