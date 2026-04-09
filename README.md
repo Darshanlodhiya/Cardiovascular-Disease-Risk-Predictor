@@ -239,6 +239,27 @@ docker compose up --build
 docker compose up --build -d
 ```
 
+### Use Docker Hub images (no local build)
+
+Set image names, then pull and run:
+
+```bash
+# PowerShell
+$env:BACKEND_IMAGE="YOUR_DOCKERHUB_USERNAME/cvd-project-backend:latest"
+$env:FRONTEND_IMAGE="YOUR_DOCKERHUB_USERNAME/cvd-project-frontend:latest"
+docker compose pull
+docker compose up -d
+```
+
+For Bash:
+
+```bash
+export BACKEND_IMAGE="YOUR_DOCKERHUB_USERNAME/cvd-project-backend:latest"
+export FRONTEND_IMAGE="YOUR_DOCKERHUB_USERNAME/cvd-project-frontend:latest"
+docker compose pull
+docker compose up -d
+```
+
 ### Check status
 
 ```bash

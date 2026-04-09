@@ -1,5 +1,6 @@
 services:
   backend:
+    image: ${BACKEND_IMAGE:-cvd_project-backend:latest}
     build:
       context: .
       dockerfile: Dockerfile
@@ -16,6 +17,7 @@ services:
     restart: unless-stopped
 
   frontend:
+    image: ${FRONTEND_IMAGE:-cvd_project-frontend:latest}
     build:
       context: .
       dockerfile: Dockerfile
