@@ -34,7 +34,7 @@ st.markdown(
     unsafe_allow_html=True
 )
 st.markdown(
-    "<h5 style='text-align: center;'>============================NOTE: Please enter all details in order to get best prediction.============================</h5>",
+    "<h5 style='text-align: center;'>NOTE: Please enter all details in order to get best prediction.=</h5>",
     unsafe_allow_html=True
 )
 
