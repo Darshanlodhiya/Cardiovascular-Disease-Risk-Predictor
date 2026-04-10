@@ -23,3 +23,5 @@ Models_Performance/
 
 .git/
 .gitignore
+frontend/
+how_to_read_prediction_updated.pdf

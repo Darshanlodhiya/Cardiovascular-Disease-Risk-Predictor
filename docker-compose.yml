@@ -1,33 +1,39 @@
 services:
   backend:
-    image: ${BACKEND_IMAGE:-cvd_project-backend:latest}
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: backend/Dockerfile
+    image: 26darshan04/cvd-project-backend:v1.3
     container_name: cvd-backend
-    command: uvicorn main:app --host 0.0.0.0 --port 8003
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8003/health', timeout=5)"]
-      interval: 20s
-      timeout: 10s
-      retries: 5
-      start_period: 30s
     ports:
       - "8003:8003"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8003/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+    environment:
+      - PYTHONUNBUFFERED=1
     restart: unless-stopped
 
   frontend:
-    image: ${FRONTEND_IMAGE:-cvd_project-frontend:latest}
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ./frontend
+    image: 26darshan04/cvd-project-frontend:v1.3
     container_name: cvd-frontend
-    command: streamlit run app.py --server.address 0.0.0.0 --server.port 8501
-    environment:
-      - API_BASE_URL=http://backend:8003
     ports:
       - "8501:8501"
     depends_on:
       backend:
         condition: service_healthy
+    environment:
+      - API_BASE_URL=http://backend:8003
+      - PYTHONUNBUFFERED=1
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8501', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
     restart: unless-stopped

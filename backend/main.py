@@ -2,6 +2,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 from typing import Literal, Annotated
 import sys
+import os
 import shap
 import numpy as np
 import joblib
@@ -41,22 +42,23 @@ sys.modules["__main__"].ThresholdModel = ThresholdModel
 # ==============================
 MODEL_REGISTRY = {}
 
-def load_model(path):
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+def load_model(filename):
     try:
-        # Ensure custom wrapper is available during unpickling
-        setattr(__main__, "ThresholdModel", ThresholdModel)
-        sys.modules["__main__"].ThresholdModel = ThresholdModel
-        m = joblib.load(path)
+        full_path = os.path.join(BASE_DIR, "models", filename)
+
+        print(f"Loading model from: {full_path}")  # DEBUG
+
+        m = joblib.load(full_path)
+
         if hasattr(m, "model"):
             m = m.model
+
         return m
-    except ModuleNotFoundError as e:
-        # Some pickles require optional libs (e.g., lightgbm, xgboost).
-        # Keep API bootable even if a specific model can't be loaded.
-        print(f"Model '{path}' could not be loaded (missing dependency): {e}")
-        return None
+
     except Exception as e:
-        print(f"Model '{path}' could not be loaded: {e}")
+        print(f"Model '{filename}' failed to load: {e}")
         return None
 
 MODEL_REGISTRY = {
